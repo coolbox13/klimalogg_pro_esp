@@ -52,7 +52,7 @@ public:
         radio->setOOK(false);                 // Use FSK not OOK
         radio->setDataShaping(0.0);           // No data shaping
         radio->setSyncWord(syncWord, 2);      // Set sync word
-        radio->disableCrc();                  // KlimaLogg uses its own checksum
+        radio->setCRC(false);  // KlimaLogg uses its own checksum
         radio->setEncoding(RADIOLIB_ENCODING_NRZ); // NRZ encoding
         
         // Apply frequency correction

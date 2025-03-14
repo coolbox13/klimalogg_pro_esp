@@ -2,7 +2,7 @@
 #include <SPI.h>
 #include <Wire.h>
 #include "SSD1306Wire.h"
-#include <RadioLib.h>
+#include <rtl_433_ESP.h>
 
 // Built-in LED pin for TTGO LoRa32
 #define LED_PIN 25
@@ -28,29 +28,54 @@
 // Initialize display with the correct pins
 SSD1306Wire display(0x3c, OLED_SDA, OLED_SCL);
 
-// Initialize LoRa module
-SX1278 radio = new Module(SS, DI0, RST, -1);
-
 // KlimaLogg specific settings
-#define FREQUENCY      868.250
-#define BANDWIDTH      125.0
-#define SPREADING_FACTOR 7
-#define CODING_RATE    5
-#define SYNC_WORD      0x12
-#define POWER          10
-#define CURRENT_LIMIT  100
-#define PREAMBLE_LENGTH 8
-#define GAIN           0
+#define KLIMALOGG_FREQUENCY 868.0     // KlimaLogg frequency in MHz
 
-// LoRa interrupt handler - moved before setup() to fix the build error
-volatile bool receivedFlag = false;
-volatile bool enableInterrupt = true;
+// Create an instance of the rtl_433 decoder
+rtl_433_ESP rtl_433;
 
-void handleLoRaInterrupt() {
-  if(!enableInterrupt) {
-    return;
+// Message buffer for rtl_433
+char messageBuffer[1024];
+
+// Packet counter
+int packetCounter = 0;
+unsigned long lastPacketTime = 0;
+
+// Callback function for rtl_433 data
+void rtl_433_callback(char* message) {
+  packetCounter++;
+  lastPacketTime = millis();
+  
+  // Print the raw message
+  Serial.print("RTL_433 message: ");
+  Serial.println(message);
+  
+  // Display the message on the OLED
+  display.clear();
+  display.setTextAlignment(TEXT_ALIGN_CENTER);
+  display.drawString(64, 0, "KlimaLogg Pro");
+  display.setTextAlignment(TEXT_ALIGN_LEFT);
+  display.drawString(0, 15, "Packet #" + String(packetCounter));
+  
+  // Simple parsing for demonstration
+  String msg = String(message);
+  
+  // Display raw message (truncated if needed)
+  String displayMsg = msg;
+  if (displayMsg.length() > 60) {
+    displayMsg = displayMsg.substring(0, 57) + "...";
   }
-  receivedFlag = true;
+  display.drawStringMaxWidth(0, 25, 128, displayMsg);
+  
+  display.display();
+  
+  // Flash LED to indicate packet received
+  for (int i = 0; i < 3; i++) {
+    digitalWrite(LED_PIN, HIGH);
+    delay(100);
+    digitalWrite(LED_PIN, LOW);
+    delay(100);
+  }
 }
 
 void setup() {
@@ -58,7 +83,7 @@ void setup() {
   Serial.begin(115200);
   delay(100);
   
-  Serial.println("KlimaLogg Pro Receiver");
+  Serial.println("KlimaLogg Pro Receiver using rtl_433_ESP");
   
   // Set up LED pin
   pinMode(LED_PIN, OUTPUT);
@@ -82,34 +107,28 @@ void setup() {
     display.display();
   }
   
-  // Initialize LoRa
-  Serial.println("Initializing LoRa module...");
-  int state = radio.begin(FREQUENCY, BANDWIDTH, SPREADING_FACTOR, CODING_RATE, SYNC_WORD, POWER, PREAMBLE_LENGTH, GAIN);
-  if (state == RADIOLIB_ERR_NONE) {
-    Serial.println("LoRa module initialized successfully!");
-    display.clear();
-    display.drawString(64, 10, "KlimaLogg Pro");
-    display.drawString(64, 30, "LoRa Ready");
-    display.display();
-  } else {
-    Serial.print("LoRa initialization failed, code: ");
-    Serial.println(state);
-    display.clear();
-    display.drawString(64, 10, "KlimaLogg Pro");
-    display.drawString(64, 30, "LoRa Failed!");
-    display.drawString(64, 50, "Error: " + String(state));
-    display.display();
-  }
+  // Initialize SPI for the radio
+  SPI.begin(SCK, MISO, MOSI, SS);
   
-  // Set up LoRa for receiving
-  radio.setDio0Action(handleLoRaInterrupt, RISING); // Added RISING as the second parameter
-  state = radio.startReceive();
-  if (state == RADIOLIB_ERR_NONE) {
-    Serial.println("LoRa receiver started!");
-  } else {
-    Serial.print("Failed to start LoRa receiver, code: ");
-    Serial.println(state);
-  }
+  // Initialize rtl_433_ESP
+  Serial.println("Initializing rtl_433_ESP...");
+  
+  // Initialize the receiver on the DIO0 pin with the KlimaLogg frequency
+  rtl_433.initReceiver(DI0, KLIMALOGG_FREQUENCY);
+  
+  // Set the callback function with message buffer
+  rtl_433.setCallback(rtl_433_callback, messageBuffer, sizeof(messageBuffer));
+  
+  // Enable the receiver
+  rtl_433.enableReceiver();
+  
+  Serial.println("rtl_433_ESP initialized and ready to receive");
+  
+  display.clear();
+  display.setTextAlignment(TEXT_ALIGN_CENTER);
+  display.drawString(64, 10, "KlimaLogg Pro");
+  display.drawString(64, 30, "Ready to receive");
+  display.display();
   
   Serial.println("Setup complete");
 }
@@ -117,105 +136,34 @@ void setup() {
 void loop() {
   static unsigned long lastUpdate = 0;
   static int counter = 0;
-  static int packetCounter = 0;
-  static long lastRssiCheck = 0;
-  static float rssi = -120.0; // Default low RSSI value
   
-  // Check RSSI every 200ms
-  if (millis() - lastRssiCheck >= 200) {
-    lastRssiCheck = millis();
-    rssi = radio.getRSSI();
-  }
+  // Process any incoming data
+  rtl_433.loop();
   
-  // Update display every second
+  // Update display every second with uptime and packet count
   if (millis() - lastUpdate >= 1000) {
     lastUpdate = millis();
     counter++;
     
-    // Update display with uptime and RSSI
-    display.clear();
-    display.setTextAlignment(TEXT_ALIGN_CENTER);
-    display.drawString(64, 0, "KlimaLogg Pro");
-    display.drawString(64, 15, "Listening...");
-    
-    // Show RSSI value
-    display.setTextAlignment(TEXT_ALIGN_LEFT);
-    display.drawString(0, 30, "RSSI: " + String(rssi, 1) + " dBm");
-    
-    // Show packet counter
-    display.drawString(0, 40, "Packets: " + String(packetCounter));
-    
-    // Show uptime
-    display.drawString(0, 50, "Uptime: " + String(counter) + "s");
-    display.display();
-    
-    // Toggle LED
-    digitalWrite(LED_PIN, !digitalRead(LED_PIN));
-    Serial.println("Running for " + String(counter) + " seconds, RSSI: " + String(rssi) + " dBm");
-  }
-  
-  // Check if LoRa packet received
-  if(receivedFlag) {
-    // Disable interrupt during processing
-    enableInterrupt = false;
-    receivedFlag = false;
-    
-    // Read received data
-    String receivedData;
-    int state = radio.readData(receivedData);
-    
-    if (state == RADIOLIB_ERR_NONE) {
-      // Packet received successfully
-      packetCounter++;
-      
-      // Convert binary data to hex for better display
-      String hexData = "";
-      for(size_t i = 0; i < receivedData.length(); i++) {
-        char hex[4];
-        sprintf(hex, "%02X ", (unsigned char)receivedData.charAt(i));
-        hexData += hex;
-      }
-      
-      Serial.println("Received packet #" + String(packetCounter) + "!");
-      Serial.print("Data (HEX): ");
-      Serial.println(hexData);
-      Serial.print("Data Length: ");
-      Serial.println(receivedData.length());
-      Serial.print("RSSI: ");
-      Serial.println(radio.getRSSI());
-      
-      // Display received data
+    // Only update if no packet was recently received
+    if (millis() - lastPacketTime > 2000) {
       display.clear();
       display.setTextAlignment(TEXT_ALIGN_CENTER);
       display.drawString(64, 0, "KlimaLogg Pro");
-      display.drawString(64, 10, "Data Received! #" + String(packetCounter));
+      display.drawString(64, 15, "Listening...");
+      
+      // Show packet counter
       display.setTextAlignment(TEXT_ALIGN_LEFT);
-      display.drawString(0, 25, "RSSI: " + String(radio.getRSSI()) + " dBm");
-      display.drawString(0, 35, "Length: " + String(receivedData.length()));
+      display.drawString(0, 30, "Packets: " + String(packetCounter));
       
-      // Display hex data (truncated if needed)
-      String displayHex = hexData;
-      if(displayHex.length() > 60) {
-        displayHex = displayHex.substring(0, 57) + "...";
-      }
-      display.drawStringMaxWidth(0, 45, 128, displayHex);
+      // Show uptime
+      display.drawString(0, 40, "Uptime: " + String(counter) + "s");
+      
       display.display();
-      
-      // Flash LED to indicate packet received
-      for(int i = 0; i < 3; i++) {
-        digitalWrite(LED_PIN, HIGH);
-        delay(100);
-        digitalWrite(LED_PIN, LOW);
-        delay(100);
-      }
-    } else {
-      // Error receiving packet
-      Serial.print("LoRa reception failed, code: ");
-      Serial.println(state);
     }
     
-    // Re-enable receiver
-    radio.startReceive();
-    enableInterrupt = true;
+    // Toggle LED
+    digitalWrite(LED_PIN, !digitalRead(LED_PIN));
+    Serial.println("Running for " + String(counter) + " seconds, Packets: " + String(packetCounter));
   }
 }

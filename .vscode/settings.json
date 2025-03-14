@@ -3,6 +3,8 @@
         "\"*.module\"": "\"php\"",
         "memory": "cpp",
         "random": "cpp",
-        "optional": "cpp"
+        "optional": "cpp",
+        "*.tcc": "cpp",
+        "fstream": "cpp"
     }
 }

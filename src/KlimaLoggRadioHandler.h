@@ -1,74 +1,66 @@
 #include <Arduino.h>
-#include <RadioLib.h>
+#include <rtl_433_ESP.h>
 
-// RadioHandler class for configuring the LoRa radio module for KlimaLogg reception
+// RadioHandler class for configuring the radio module for KlimaLogg reception using rtl_433_ESP
 class KlimaLoggRadioHandler {
 private:
-    SX1278* radio;
+    rtl_433_ESP* rtl433;
     float frequency;      // MHz
-    float deviation;      // kHz
-    float rxBandwidth;    // kHz
-    float bitRate;        // kbps
-    uint8_t syncWord[2];  // Sync/preamble pattern
     bool isReceiving;
     int lastRssi;
+    int packetCount;
+    unsigned long lastPacketTime;
     
     // Default radio settings based on KlimaLogg protocol values
     static constexpr float DEFAULT_FREQ_EU = 868.3;  // EU frequency in MHz
     static constexpr float DEFAULT_FREQ_US = 915.0;  // US frequency in MHz
-    static constexpr float DEFAULT_DEVIATION = 50.0; // kHz, approximate based on KlimaLogg AX5051 registers
-    static constexpr float DEFAULT_BANDWIDTH = 100.0; // kHz
-    static constexpr float DEFAULT_BITRATE = 17.241; // kbps, from AX5051 configuration
+    
+    // Callback function for rtl_433 data
+    static void rtl433Callback(char* message) {
+        // This will be handled in the main code
+    }
     
 public:
-    KlimaLoggRadioHandler(SX1278* _radio, bool useUSFrequency = false) : 
-        radio(_radio),
+    KlimaLoggRadioHandler(bool useUSFrequency = false) : 
         frequency(useUSFrequency ? DEFAULT_FREQ_US : DEFAULT_FREQ_EU),
-        deviation(DEFAULT_DEVIATION),
-        rxBandwidth(DEFAULT_BANDWIDTH),
-        bitRate(DEFAULT_BITRATE),
         isReceiving(false),
-        lastRssi(-120)
+        lastRssi(-120),
+        packetCount(0),
+        lastPacketTime(0)
     {
-        // Default sync word/preamble pattern from KlimaLogg (0xAA)
-        syncWord[0] = 0xAA;
-        syncWord[1] = 0xAA;
+        rtl433 = new rtl_433_ESP();
     }
     
     // Initialize radio for KlimaLogg reception
-    bool begin() {
-        Serial.println("Initializing radio for KlimaLogg reception...");
+    bool begin(int csPin, int irqPin, int rstPin, void (*callback)(char*)) {
+        Serial.println("Initializing rtl_433_ESP for KlimaLogg reception...");
         
-        // Initialize radio with FSK modulation
-        int state = radio->beginFSK(frequency, bitRate, deviation, rxBandwidth);
+        // Initialize rtl_433_ESP
+        rtl433->initReceiver(csPin, irqPin, rstPin);
         
-        if (state != RADIOLIB_ERR_NONE) {
-            Serial.print("Failed to initialize radio, code: ");
-            Serial.println(state);
-            return false;
-        }
+        // Set the callback function
+        rtl433->setCallback(callback, "KlimaLogg");
         
-        // Configure specific radio settings for KlimaLogg reception
-        radio->setOOK(false);                 // Use FSK not OOK
-        radio->setDataShaping(0.0);           // No data shaping
-        radio->setSyncWord(syncWord, 2);      // Set sync word
-        radio->setCRC(false);  // KlimaLogg uses its own checksum
-        radio->setEncoding(RADIOLIB_ENCODING_NRZ); // NRZ encoding
+        // Set the frequency
+        rtl433->setFrequency(frequency);
         
-        // Apply frequency correction
-        applyFrequencyCorrection();
+        // Enable the receiver
+        rtl433->enableReceiver(true);
         
-        // Set radio to receive mode
-        startReceive();
-        
-        Serial.println("Radio configured for KlimaLogg reception");
+        isReceiving = true;
+        Serial.println("rtl_433_ESP configured for KlimaLogg reception");
         return true;
+    }
+    
+    // Process incoming data (call this in loop)
+    void loop() {
+        rtl433->loop();
     }
     
     // Start receiving
     void startReceive() {
         if (!isReceiving) {
-            radio->startReceive();
+            rtl433->enableReceiver(true);
             isReceiving = true;
         }
     }
@@ -76,35 +68,24 @@ public:
     // Stop receiving
     void stopReceive() {
         if (isReceiving) {
-            radio->standby();
+            rtl433->enableReceiver(false);
             isReceiving = false;
         }
     }
     
-    // Check if data is available
+    // Check if data is available (always returns false as rtl_433_ESP uses callbacks)
     bool available() {
-        if (isReceiving) {
-            return radio->available();
-        }
-        return false;
+        return false; // rtl_433_ESP uses callbacks instead
     }
     
-    // Read received data into buffer
-    int readData(uint8_t* buffer, size_t& length) {
-        int state = radio->readData(buffer, length);
-        
-        // Get RSSI
-        lastRssi = radio->getRSSI();
-        
-        // Restart reception
-        startReceive();
-        
-        return state;
-    }
-    
-    // Get last RSSI value (signal strength)
+    // Get last RSSI value (not directly available in rtl_433_ESP)
     int getRssi() {
         return lastRssi;
+    }
+    
+    // Set RSSI value (to be called from main code if RSSI is available)
+    void setRssi(int rssi) {
+        lastRssi = rssi;
     }
     
     // Get signal quality as percentage (0-100)
@@ -116,33 +97,24 @@ public:
         return quality;
     }
     
-    // Apply frequency correction
-    void applyFrequencyCorrection() {
-        // In real KlimaLogg receiver, this reads from flash memory
-        // Here we use a hardcoded correction factor for demonstration
-        
-        // Replicate the KlimaLogg frequency calculation logic
-        uint32_t freqVal = (uint32_t)(frequency * 1000000.0 / 16000000.0 * 16777216.0);
-        
-        // Apply correction (example value from KlimaLogg code)
-        int32_t corVal = 96416;
-        freqVal += corVal;
-        
-        // Ensure odd value
-        if (!(freqVal % 2)) {
-            freqVal += 1;
-        }
-        
-        // Calculate corrected frequency
-        float correctedFreq = (float)freqVal * 16000000.0 / 16777216.0 / 1000000.0;
-        
-        // Set corrected frequency
-        radio->setFrequency(correctedFreq);
-        
-        Serial.print("Applied frequency correction. Original: ");
-        Serial.print(frequency, 3);
-        Serial.print(" MHz, Corrected: ");
-        Serial.print(correctedFreq, 3);
-        Serial.println(" MHz");
+    // Increment packet count
+    void incrementPacketCount() {
+        packetCount++;
+        lastPacketTime = millis();
+    }
+    
+    // Get packet count
+    int getPacketCount() {
+        return packetCount;
+    }
+    
+    // Get time since last packet
+    unsigned long getTimeSinceLastPacket() {
+        return millis() - lastPacketTime;
+    }
+    
+    // Get last packet time
+    unsigned long getLastPacketTime() {
+        return lastPacketTime;
     }
 };

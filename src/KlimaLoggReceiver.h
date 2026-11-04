@@ -37,11 +37,12 @@ struct ReceiverPins {
   int8_t cs;
   int8_t reset;
   int8_t dio0;
-  int8_t dio2;  // raw OOK data, must be interrupt capable
+  int8_t dio2;       // raw OOK data, must be interrupt capable
+  int8_t dio1 = -1;  // bit clock; only ConsoleLink needs it
 
   // LilyGO T3 V1.6.1 / TTGO LoRa32 V2.1_1.6 (868 MHz). Tested.
   static constexpr ReceiverPins lilygoT3V161() {
-    return ReceiverPins{5, 19, 27, 18, 23, 26, 32};
+    return ReceiverPins{5, 19, 27, 18, 23, 26, 32, 33};
   }
 };
 

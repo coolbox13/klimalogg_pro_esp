@@ -17,6 +17,11 @@
 
 namespace klimalogg {
 
+namespace detail {
+// The object (Receiver or ConsoleLink) that owns the radio, or nullptr.
+const void* radioUser = nullptr;
+}  // namespace detail
+
 namespace {
 
 // OOK bitrate only paces the peak-threshold decay; RadioLib caps OOK here.
@@ -170,7 +175,9 @@ int16_t configureRadio(SX1276& r, const ReceiverConfig& cfg) {
 Receiver::~Receiver() { end(); }
 
 int16_t Receiver::begin(const ReceiverPins& pins, const ReceiverConfig& cfg) {
-  if (owner != nullptr) return kErrAlreadyRunning;  // one receiver only
+  if (owner != nullptr || detail::radioUser != nullptr) {
+    return kErrAlreadyRunning;  // one radio user only
+  }
   if (!validPins(pins)) return kErrInvalidPins;
 
   spi = new SPIClass(VSPI);
@@ -199,12 +206,14 @@ int16_t Receiver::begin(const ReceiverPins& pins, const ReceiverConfig& cfg) {
   pinMode(dataPin, INPUT);
   attachInterrupt(digitalPinToInterrupt(dataPin), onEdge, CHANGE);
   owner = this;
+  detail::radioUser = this;
   return RADIOLIB_ERR_NONE;
 }
 
 void Receiver::end() {
   if (owner != this) return;  // never started, or another object owns it
   owner = nullptr;
+  detail::radioUser = nullptr;
   detachInterrupt(digitalPinToInterrupt(dataPin));
   radio->standby();
   releaseRadio();

@@ -17,6 +17,13 @@ constexpr size_t kCurTempByte = 29;  // starts at the low nibble
 constexpr size_t kCurHumByte = 17;   // starts at the high nibble
 constexpr size_t kCurChannelStride = 24;
 
+// Config: settings (bit 2 = DCF on), signed time zone, history interval.
+constexpr size_t kCfgSettings = 5;
+constexpr uint8_t kCfgDcfBit = 0x04;
+constexpr size_t kCfgTimeZone = 6;
+constexpr size_t kCfgInterval = 7;
+constexpr uint32_t kIntervalSeconds[] = {60,   300,  600,   900,  1800,
+                                         3600, 7200, 10800, 21600};
 // Config: sensor IDs of channels 1..8, big endian, 8 bytes apart.
 constexpr size_t kCfgFirstSensorId = 63;
 constexpr size_t kCfgSensorStride = 8;
@@ -120,6 +127,9 @@ bool parseConfig(const uint8_t* f, size_t len, ConsoleConfig* out) {
   Header h;
   if (!parseTyped(f, len, kConfigBytes, kTypeConfig, &h)) return false;
   out->header = h;
+  out->timeZoneHours = (int8_t)f[kCfgTimeZone];
+  out->historyIntervalCode = f[kCfgInterval] & 0x0F;
+  out->dcfEnabled = (f[kCfgSettings] & kCfgDcfBit) != 0;
   out->sensorId[0] = kNoSensor;
   for (int c = 1; c < kChannels; c++) {
     const size_t at = kCfgFirstSensorId + (c - 1) * kCfgSensorStride;
@@ -151,6 +161,11 @@ bool parseHistory(const uint8_t* f, size_t len, HistoryFrame* out) {
     }
   }
   return true;
+}
+
+uint32_t historyIntervalSeconds(uint8_t code) {
+  constexpr size_t n = sizeof(kIntervalSeconds) / sizeof(kIntervalSeconds[0]);
+  return code < n ? kIntervalSeconds[code] : 0;
 }
 
 uint32_t historyAddress(uint32_t index) {

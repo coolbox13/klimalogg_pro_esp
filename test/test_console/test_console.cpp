@@ -95,6 +95,21 @@ void test_config_sensor_ids() {
   for (int i = 5; i < 9; i++) TEST_ASSERT_EQUAL_HEX16(kNoSensor, cfg.sensorId[i]);
   TEST_ASSERT_EQUAL_HEX16(kNoSensor, cfg.sensorId[0]);  // the console itself
   TEST_ASSERT_EQUAL_HEX16(0x14D1, cfg.checksum);
+  TEST_ASSERT_EQUAL(1, cfg.timeZoneHours);       // +1 h vs Frankfurt
+  TEST_ASSERT_EQUAL(0, cfg.historyIntervalCode); // 0 = 1 minute
+  TEST_ASSERT_EQUAL(60, historyIntervalSeconds(cfg.historyIntervalCode));
+  TEST_ASSERT_TRUE(cfg.dcfEnabled);
+}
+
+void test_config_negative_time_zone() {
+  auto f = bytes(kConfigHex);
+  f[6] = 0xF4;  // -12 h
+  f[7] = 0x03;  // 15 minutes
+  ConsoleConfig cfg;
+  TEST_ASSERT_TRUE(parseConfig(f.data(), f.size(), &cfg));
+  TEST_ASSERT_EQUAL(-12, cfg.timeZoneHours);
+  TEST_ASSERT_EQUAL(900, historyIntervalSeconds(cfg.historyIntervalCode));
+  TEST_ASSERT_EQUAL(0, historyIntervalSeconds(9));  // unknown code
 }
 
 // ---- history ----
@@ -180,6 +195,7 @@ int main() {
   RUN_TEST(test_current_weather_rejects_wrong_type_or_length);
   RUN_TEST(test_negative_temperature);
   RUN_TEST(test_config_sensor_ids);
+  RUN_TEST(test_config_negative_time_zone);
   RUN_TEST(test_history_frame);
   RUN_TEST(test_history_alarm_record_is_not_valid);
   RUN_TEST(test_history_bad_date_is_not_valid);

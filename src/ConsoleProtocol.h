@@ -72,9 +72,18 @@ struct CurrentWeather {
 
 struct ConsoleConfig {
   Header header;
+  // Added to the DCF77 (Frankfurt) time for the display and the history
+  // time stamps. -12..+12.
+  int8_t timeZoneHours;
+  uint8_t historyIntervalCode;  // see historyIntervalSeconds()
+  bool dcfEnabled;
   uint16_t sensorId[kChannels];  // kNoSensor = none; [0] is the console
   uint16_t checksum;             // echoed in every ACK
 };
+
+// History interval code (0 = 1 min, 1 = 5 min, 2 = 10, 3 = 15, 4 = 30,
+// 5 = 60 min, 6 = 2 h, 7 = 3 h, 8 = 6 h) in seconds; 0 if unknown.
+uint32_t historyIntervalSeconds(uint8_t code);
 
 // Console local time, as kept by the console (DCF77 or set by hand).
 struct DateTime {

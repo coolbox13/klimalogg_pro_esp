@@ -153,6 +153,53 @@ void test_noise_gives_no_frames() {
   TEST_ASSERT_EQUAL(0, run(d, bits).size());
 }
 
+// ---- library encoder ----
+
+static std::vector<uint8_t> unpack(const uint8_t* packed, size_t bits) {
+  std::vector<uint8_t> out;
+  for (size_t i = 0; i < bits; i++) out.push_back((packed[i / 8] >> (7 - i % 8)) & 1);
+  return out;
+}
+
+void test_encoder_round_trip() {
+  const std::vector<uint8_t> data = {0x0B, 0xAD, 0x00, 0x30, 0xFF, 0xFF, 0x7E,
+                                     0x00, 0x80, 0x12, 0x34};
+  uint8_t packed[256];
+  const size_t bits = encodeAxFrame(data.data(), data.size(), packed,
+                                    sizeof(packed) * 8);
+  TEST_ASSERT_GREATER_THAN(0, bits);
+  AxFrameDecoder d;
+  auto frames = run(d, unpack(packed, bits));
+  TEST_ASSERT_EQUAL(1, frames.size());
+  TEST_ASSERT_EQUAL_MEMORY(data.data(), frames[0].data(), data.size());
+}
+
+void test_encoder_matches_capture_frame() {
+  // Re-encode the real console frame; decoding must give it back.
+  AxFrameDecoder d;
+  auto frames = run(d, captureBits());
+  TEST_ASSERT_EQUAL(1, frames.size());
+  static uint8_t packed[600];
+  const size_t bits = encodeAxFrame(frames[0].data(), frames[0].size(), packed,
+                                    sizeof(packed) * 8);
+  AxFrameDecoder d2;
+  auto again = run(d2, unpack(packed, bits));
+  TEST_ASSERT_EQUAL(1, again.size());
+  TEST_ASSERT_EQUAL_MEMORY(frames[0].data(), again[0].data(), frames[0].size());
+}
+
+void test_encoder_rejects_small_buffer() {
+  const uint8_t data[20] = {};
+  uint8_t packed[16];
+  TEST_ASSERT_EQUAL(0, encodeAxFrame(data, sizeof(data), packed, sizeof(packed) * 8));
+}
+
+void test_encoder_rejects_oversized_frame() {
+  static uint8_t data[AxFrameDecoder::kMaxFrameBytes + 1];
+  static uint8_t packed[1024];
+  TEST_ASSERT_EQUAL(0, encodeAxFrame(data, sizeof(data), packed, sizeof(packed) * 8));
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_crc_x25_check_value);
@@ -163,5 +210,9 @@ int main() {
   RUN_TEST(test_two_frames_back_to_back);
   RUN_TEST(test_oversized_frame_is_dropped);
   RUN_TEST(test_noise_gives_no_frames);
+  RUN_TEST(test_encoder_round_trip);
+  RUN_TEST(test_encoder_matches_capture_frame);
+  RUN_TEST(test_encoder_rejects_small_buffer);
+  RUN_TEST(test_encoder_rejects_oversized_frame);
   return UNITY_END();
 }

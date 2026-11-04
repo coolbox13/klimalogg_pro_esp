@@ -17,6 +17,13 @@ namespace klimalogg {
 // CRC-16/X-25 (poly 0x1021 reflected, init and xorout 0xFFFF).
 uint16_t crcX25(const uint8_t* data, size_t len);
 
+// Encodes `data` (without CRC) as air bits for the radio: preamble, flag,
+// stuffed data + CRC, flag; scrambled and NRZI coded. Writes the levels
+// MSB first into `out` (zeroed first). Returns the number of bits, or 0
+// when the frame is too long or `out` too small.
+size_t encodeAxFrame(const uint8_t* data, size_t len, uint8_t* out,
+                     size_t outCapacityBits);
+
 class AxFrameDecoder {
  public:
   // Largest frame (without FCS); current weather is 229 bytes.

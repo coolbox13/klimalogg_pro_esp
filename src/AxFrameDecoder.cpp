@@ -14,7 +14,67 @@ constexpr size_t kFcsBytes = 2;
 constexpr size_t kMinFrameBytes = 1 + kFcsBytes;
 constexpr size_t kBufBits = (AxFrameDecoder::kMaxFrameBytes + kFcsBytes) * 8;
 
+constexpr uint8_t kFlag = 0x7E;
+constexpr uint8_t kPreambleByte = 0xAA;  // the USB stick's preamble pattern
+constexpr size_t kPreambleBytes = 8;
+constexpr size_t kTrailerBytes = 2;      // lets the closing flag leave the radio
+
+// Air-bit writer: scrambles, NRZI codes and packs MSB first.
+class AirWriter {
+ public:
+  AirWriter(uint8_t* out, size_t capacityBits) : out_(out), cap_(capacityBits) {}
+
+  void bit(uint8_t u) {
+    const uint8_t s = u ^ ((history_ >> 11) & 1) ^ ((history_ >> 16) & 1);
+    history_ = ((history_ << 1) | s) & 0x1FFFF;
+    if (s == 0) level_ ^= 1;  // NRZI: 0 = change
+    if (n_ < cap_) {
+      if (level_) out_[n_ / 8] |= (uint8_t)(0x80 >> (n_ % 8));
+    }
+    n_++;
+  }
+  void rawByte(uint8_t b) {
+    for (int i = 0; i < 8; i++) bit((b >> i) & 1);
+  }
+  void stuffedByte(uint8_t b) {
+    for (int i = 0; i < 8; i++) {
+      const uint8_t v = (b >> i) & 1;
+      bit(v);
+      ones_ = v ? ones_ + 1 : 0;
+      if (ones_ == kStuffAfterOnes) {
+        bit(0);
+        ones_ = 0;
+      }
+    }
+  }
+  size_t count() const { return n_; }
+
+ private:
+  uint8_t* out_;
+  size_t cap_;
+  size_t n_ = 0;
+  uint32_t history_ = 0;
+  uint8_t level_ = 0;
+  uint8_t ones_ = 0;
+};
+
 }  // namespace
+
+size_t encodeAxFrame(const uint8_t* data, size_t len, uint8_t* out,
+                     size_t outCapacityBits) {
+  if (len > AxFrameDecoder::kMaxFrameBytes) return 0;
+  for (size_t i = 0; i < (outCapacityBits + 7) / 8; i++) out[i] = 0;
+  AirWriter w(out, outCapacityBits);
+  for (size_t i = 0; i < kPreambleBytes; i++) w.rawByte(kPreambleByte);
+  w.rawByte(kFlag);
+  for (size_t i = 0; i < len; i++) w.stuffedByte(data[i]);
+  const uint16_t fcs = crcX25(data, len);
+  w.stuffedByte(fcs & 0xFF);
+  w.stuffedByte(fcs >> 8);
+  w.rawByte(kFlag);
+  for (size_t i = 0; i < kTrailerBytes; i++) w.rawByte(kPreambleByte);
+  return w.count() <= outCapacityBits ? w.count() : 0;
+}
 
 uint16_t crcX25(const uint8_t* data, size_t len) {
   uint16_t crc = 0xFFFF;

@@ -31,4 +31,4 @@ jobs:
       - name: Install PlatformIO
         run: pip install platformio==6.1.18
       - name: Build examples
-        run: pio run -e t3_v161 -e tune_floor
+        run: pio run -e t3_v161 -e tune_floor -e console_listen

@@ -139,6 +139,33 @@ The SX1276 runs in OOK continuous mode. An interrupt timestamps every edge
 of the demodulator output on DIO2 and `PulseDecoder` turns pulse widths into
 bits, finds the sync word and checks the CRC.
 
+## Base station link
+
+`ConsoleLink` talks to the KlimaLogg Pro **base station** (30.3039) the way
+TFA's USB transceiver does, without the stick or a PC. `ConsoleProtocol`
+parses its frames (current readings of all 9 channels, configuration with
+the channel -> sensor ID mapping, history records) and `ConsoleSession`
+downloads the history (up to 51,200 records) and sets the console clock.
+`examples/console_listen` prints the current readings.
+
+On air (measured with an RTL-SDR and confirmed on the ESP32):
+
+| | |
+|---|---|
+| Frequency | 868.2815 MHz; tones at only ±5 kHz |
+| Modulation | 2-FSK, ~19.9 kbit/s |
+| Coding | NRZI + scrambler 1+x^12+x^17, HDLC framing, CRC-16/X-25 |
+| Exchange | the console starts; the transceiver replies 10–150 ms later |
+
+The small deviation makes the SX1276's crystal error matter: set
+`ConsoleLinkConfig::frequencyMHz` to 868.2815 MHz plus your board's offset
+(a T3 V1.6.1 needed +9 kHz). `ConsoleLink` needs DIO1 (the bit clock) in
+`ReceiverPins`; it and `Receiver` share the radio, so `end()` one before
+`begin()` of the other. The frame layout follows the weewx KlimaLogg driver
+(`kl.py`) and was checked against real frames. Keep replies under the 1 %
+duty cycle of 868.0–868.6 MHz (`ConsoleSession` tolerates skipped replies:
+the console repeats the frame).
+
 ## Background
 
 Earlier documentation describes these sensors as FSK with NRZS coding. On air
@@ -157,6 +184,7 @@ To see what's on air with an RTL-SDR dongle:
 pio test -e native               # host unit tests, incl. a real rtl_433 capture
 pio run -e t3_v161 -t upload     # build + flash examples/serial_oled
 pio run -e tune_floor -t upload  # build + flash examples/tune_floor
+pio run -e console_listen -t upload  # base-station listener
 pio device monitor
 ```
 

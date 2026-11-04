@@ -215,10 +215,12 @@ int16_t ConsoleLink::send(const uint8_t* frame, size_t len) {
   if (bits == 0) return kErrFrameTooLong;
   txLen = bits;
   txPos = 0;
+  // Radio to transmit first, so it no longer drives DIO2; then take the
+  // pin. Bits clocked in meanwhile are flushed below.
+  int16_t st = radio->transmitDirect();
   pinMode(dataPin, OUTPUT);
   *clearReg = dataMask;
   sending = true;
-  int16_t st = radio->transmitDirect();
   if (st == RADIOLIB_ERR_NONE) {
     const uint32_t start = millis();
     while (txPos < txLen && millis() - start < kSendTimeoutMs) delay(1);

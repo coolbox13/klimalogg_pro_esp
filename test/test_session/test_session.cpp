@@ -191,6 +191,25 @@ void test_latest_moves_during_download() {
   TEST_ASSERT_EQUAL(SessionState::SetTime, s.state());
 }
 
+void test_never_reads_past_latest() {
+  ConsoleSession s(SessionOptions{0x01B2, 10});
+  feed(s, bytes(kConfigHex));
+  feed(s, history(1000, 5));   // after 990
+  feed(s, history(1000, 996)); // 991..996
+  HistoryRecord recs[kRecordsPerFrame];
+  uint32_t idx[kRecordsPerFrame];
+  s.takeRecords(recs, idx, kRecordsPerFrame);
+  // A frame running past the newest record: 997..1002, of which 1001
+  // and 1002 are the previous lap of the ring.
+  Reply r = feed(s, history(1000, 1002));
+  TEST_ASSERT_EQUAL(4, s.takeRecords(recs, idx, kRecordsPerFrame));
+  TEST_ASSERT_EQUAL(997, idx[0]);
+  TEST_ASSERT_EQUAL(1000, idx[3]);
+  TEST_ASSERT_EQUAL(10, s.recordsDone());
+  TEST_ASSERT_EQUAL(SessionState::SetTime, s.state());
+  TEST_ASSERT_EQUAL_HEX8((uint8_t)Action::RequestSetTime, r.b[3]);
+}
+
 void test_set_time_sequence() {
   ConsoleSession s(SessionOptions{0x01B2, 6});
   feed(s, bytes(kConfigHex));
@@ -251,6 +270,7 @@ int main() {
   RUN_TEST(test_unexpected_index_asks_again);
   RUN_TEST(test_wraps_around_the_ring);
   RUN_TEST(test_latest_moves_during_download);
+  RUN_TEST(test_never_reads_past_latest);
   RUN_TEST(test_set_time_sequence);
   RUN_TEST(test_skips_set_time_without_clock);
   RUN_TEST(test_done_stops_replying);

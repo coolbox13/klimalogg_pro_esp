@@ -133,16 +133,20 @@ size_t ConsoleSession::onHistory(const uint8_t* f, size_t len, const Header& h,
   total_ = distance(ringAdd(start_, -1), hf.latestIndex);
   const uint32_t step = distance(requested_, hf.thisIndex);
   if (step >= 1 && step <= (uint32_t)kRecordsPerFrame) {
-    // record[r] has index thisIndex - 5 + r; the last `step` are new.
-    for (int r = kRecordsPerFrame - (int)step; r < kRecordsPerFrame; r++) {
-      if (!hf.record[r].valid) continue;
+    // Never past the newest record: beyond it lies the ring's previous lap.
+    const uint32_t remaining = distance(requested_, hf.latestIndex);
+    const uint32_t take = step < remaining ? step : remaining;
+    // record[r] has index thisIndex - 5 + r.
+    for (int r = 0; r < kRecordsPerFrame; r++) {
+      const uint32_t index = ringAdd(hf.thisIndex, r - (kRecordsPerFrame - 1));
+      const uint32_t offset = distance(requested_, index);
+      if (offset < 1 || offset > take || !hf.record[r].valid) continue;
       pending_[pendingCount_] = hf.record[r];
-      pendingIndex_[pendingCount_] =
-          ringAdd(hf.thisIndex, r - (kRecordsPerFrame - 1));
+      pendingIndex_[pendingCount_] = index;
       pendingCount_++;
     }
-    requested_ = hf.thisIndex;
-    done_ += step;
+    requested_ = ringAdd(requested_, (int32_t)take);
+    done_ += take;
   }
   if (requested_ == hf.latestIndex) return afterDownload(h, now, out);
   return ack(h, Action::GetHistory, requested_, out);

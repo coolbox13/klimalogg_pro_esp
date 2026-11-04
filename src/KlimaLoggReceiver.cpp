@@ -37,12 +37,15 @@ volatile uint32_t tail = 0;  // written by poll() only
 volatile uint32_t edgeTotal = 0;
 volatile uint32_t droppedTotal = 0;
 volatile uint32_t lastEdgeUs = 0;  // esp_timer, same clock on both cores
-uint32_t dataInReg = GPIO_IN_REG;  // GPIO_IN1_REG for pins >= 32
+// GPIO input register for DIO2 (GPIO_IN1_REG for pins >= 32). Read
+// through a pointer: REG_READ() on a variable address trips an IDF
+// compile-time DPORT check.
+volatile uint32_t* dataInReg = (volatile uint32_t*)GPIO_IN_REG;
 uint32_t dataShift = 0;
 
 void IRAM_ATTR onEdge() {
   const uint32_t cycles = XTHAL_GET_CCOUNT();
-  const uint8_t level = (REG_READ(dataInReg) >> dataShift) & 1;
+  const uint8_t level = (*dataInReg >> dataShift) & 1;
   lastEdgeUs = (uint32_t)esp_timer_get_time();
   edgeTotal = edgeTotal + 1;
   const uint32_t h = head;
@@ -149,7 +152,7 @@ int16_t Receiver::begin(const ReceiverPins& pins, const ReceiverConfig& cfg) {
 
   cyclesPerUs = getCpuFrequencyMhz();
   dataPin = pins.dio2;
-  dataInReg = pins.dio2 >= 32 ? GPIO_IN1_REG : GPIO_IN_REG;
+  dataInReg = (volatile uint32_t*)(pins.dio2 >= 32 ? GPIO_IN1_REG : GPIO_IN_REG);
   dataShift = pins.dio2 >= 32 ? pins.dio2 - 32 : pins.dio2;
   tail = head;
   droppedSeen = droppedTotal;

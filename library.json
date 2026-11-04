@@ -1,6 +1,6 @@
 {
   "name": "KlimaLogg",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Receive TFA KlimaLogg Pro sensors (30.3180.IT, 30.3181.IT) on ESP32 with an SX1276/RFM95 radio. OOK at 868.3 MHz, decoded in software.",
   "keywords": "klimalogg, tfa, 868mhz, sx1276, rfm95, ook, weather, sensor, esp32",
   "repository": {

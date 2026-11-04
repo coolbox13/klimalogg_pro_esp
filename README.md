@@ -20,7 +20,7 @@ with three 30.3180.IT sensors. Classic ESP32 only (not the RISC-V C3/C6/H2).
 platform = espressif32 @ 6.13.0
 board = ttgo-lora32-v21
 framework = arduino
-lib_deps = https://github.com/coolbox13/klimalogg_pro_esp.git#v1.0.0
+lib_deps = https://github.com/coolbox13/klimalogg_pro_esp.git#v1.0.1
 ```
 
 ```cpp

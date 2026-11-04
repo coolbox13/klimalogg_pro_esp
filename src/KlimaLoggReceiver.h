@@ -11,7 +11,9 @@
 //   while (rx.poll(&t)) { if (t.result.status == klimalogg::Status::Ok) ... }
 //
 // Rules:
-// - One Receiver per board (it owns the radio and a global interrupt).
+// - One running Receiver per board (it owns the radio and a global
+//   interrupt). Other Receiver objects get kErrAlreadyRunning from begin()
+//   and their other calls do nothing.
 // - Call begin() and poll() from the same task. The interrupt runs on the
 //   core that called begin(); poll() may run on either core.
 // - Call poll() often (every few ms). Blocking the polling task for tens of
@@ -46,10 +48,19 @@ struct ReceiverPins {
 struct ReceiverConfig {
   float frequencyMHz = 868.30f;  // sensors measured at 868.31 MHz
   float bandwidthKHz = 125.0f;   // single-sided; keep >= 62.5 for 13 us pulses
-  uint8_t ookFloor = 15;         // RegOokFix; raise to cut idle noise edges
+  // RegOokFix (peak-mode floor). Measured on a T3 V1.6.1: <= 60 lets noise
+  // through (~100k interrupts/s), 90 is silent while idle and still
+  // receives a -75 dBm sensor, 110 starts losing it. Tune with
+  // examples/tune_floor.
+  uint8_t ookFloor = 90;
 };
 
 constexpr float kRssiUnknown = -200.0f;
+
+// Status codes from this library; other negative values come from RadioLib.
+constexpr int16_t kErrAlreadyRunning = -1;  // == RADIOLIB_ERR_UNKNOWN
+constexpr int16_t kErrInvalidPins = -1001;
+constexpr int16_t kErrNotRunning = -1002;
 
 struct Telegram {
   DecodeResult result;  // check result.status before using result.reading
@@ -65,11 +76,12 @@ struct ReceiverStats {
 class Receiver {
  public:
   Receiver() = default;
+  ~Receiver();  // calls end()
   Receiver(const Receiver&) = delete;
   Receiver& operator=(const Receiver&) = delete;
 
-  // Returns a RadioLib status code (0 = ok). Safe to retry after a failure.
-  // Fails with RADIOLIB_ERR_UNKNOWN (-1) if a receiver is already running.
+  // Returns 0 on success, kErrAlreadyRunning, kErrInvalidPins, or a RadioLib
+  // status code. Safe to retry after a failure.
   int16_t begin(const ReceiverPins& pins, const ReceiverConfig& config = {});
 
   // Stops reception and releases the radio. begin() may be called again.
@@ -78,6 +90,10 @@ class Receiver {
   // Processes recorded edges. Returns true and fills `out` when a telegram
   // with a sync word completed (valid or not). Never waits for the radio.
   bool poll(Telegram* out);
+
+  // Change the OOK threshold floor at runtime (see ReceiverConfig::ookFloor).
+  // Call from the polling task. Returns 0 or a RadioLib status code.
+  int16_t setOokFloor(uint8_t floor);
 
   ReceiverStats takeStats();
   float instantRssi();

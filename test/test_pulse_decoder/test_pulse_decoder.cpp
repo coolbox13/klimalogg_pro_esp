@@ -168,6 +168,26 @@ void test_short_glitches_are_merged() {
   TEST_ASSERT_EQUAL(Status::Ok, c.last.status);
 }
 
+void test_six_microsecond_spike_in_gap_is_ignored() {
+  PulseDecoder d;
+  Collector c;
+  const size_t n = strlen(kFixture);
+  for (size_t i = 0; i < n; i++) {
+    feed(d, c, true, kFixturePulseUs[kFixture[i] - '0']);
+    if (i + 1 == n) break;
+    if (i == 185) {  // inside the payload: a lone 6 us spike after a gap
+      feed(d, c, false, 5);
+      feed(d, c, true, 6);
+      feed(d, c, false, 13);
+    } else {
+      feed(d, c, false, kFixtureGapUs);
+    }
+  }
+  flush(d, c);
+  TEST_ASSERT_EQUAL(1, c.frames);
+  TEST_ASSERT_EQUAL(Status::Ok, c.last.status);
+}
+
 void test_truncated_frame_is_dropped_and_decoder_recovers() {
   PulseDecoder d;
   Collector c;
@@ -223,6 +243,7 @@ int main() {
   RUN_TEST(test_decodes_back_to_back_frames);
   RUN_TEST(test_reports_bad_crc_as_completed_frame);
   RUN_TEST(test_short_glitches_are_merged);
+  RUN_TEST(test_six_microsecond_spike_in_gap_is_ignored);
   RUN_TEST(test_truncated_frame_is_dropped_and_decoder_recovers);
   RUN_TEST(test_random_noise_yields_no_valid_frame);
   RUN_TEST(test_reset_discards_partial_frame);

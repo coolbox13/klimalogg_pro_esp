@@ -48,6 +48,37 @@ void test_table_drops_new_sensors_when_full() {
   TEST_ASSERT_EQUAL(SensorTable::kCapacity, t.size());
 }
 
+void test_full_table_evicts_longest_silent_sensor() {
+  SensorTable t;
+  for (uint16_t i = 0; i < SensorTable::kCapacity; i++) {
+    t.update(makeReading(i + 1, 0.0f), -80, 1000 + i);  // id 1 oldest
+  }
+  const uint32_t later = 1000 + SensorTable::kEvictAfterMs + 10;
+  for (uint16_t i = 1; i < SensorTable::kCapacity; i++) {
+    t.update(makeReading(i + 1, 1.0f), -80, later);  // all but id 1 alive
+  }
+  TEST_ASSERT_TRUE(t.update(makeReading(0x7FFF, 2.0f), -80, later));
+  TEST_ASSERT_EQUAL(SensorTable::kCapacity, t.size());
+  bool hasNew = false;
+  bool hasOld = false;
+  for (size_t i = 0; i < t.size(); i++) {
+    hasNew |= t.at(i).reading.id == 0x7FFF;
+    hasOld |= t.at(i).reading.id == 1;
+  }
+  TEST_ASSERT_TRUE(hasNew);
+  TEST_ASSERT_FALSE(hasOld);
+}
+
+void test_full_table_keeps_recently_seen_sensors() {
+  SensorTable t;
+  for (uint16_t i = 0; i < SensorTable::kCapacity; i++) {
+    t.update(makeReading(i + 1, 0.0f), -80, 1000);
+  }
+  // Silent for less than the eviction time: no room for a stranger.
+  TEST_ASSERT_FALSE(
+      t.update(makeReading(0x7FFF, 0.0f), -80, 1000 + SensorTable::kEvictAfterMs - 1));
+}
+
 void test_table_marks_stale_entries() {
   SensorTable t;
   t.update(makeReading(0x0001, 1.0f), -80, 1000);
@@ -79,6 +110,8 @@ int main() {
   RUN_TEST(test_table_adds_and_updates_sensor);
   RUN_TEST(test_table_keeps_first_seen_order);
   RUN_TEST(test_table_drops_new_sensors_when_full);
+  RUN_TEST(test_full_table_evicts_longest_silent_sensor);
+  RUN_TEST(test_full_table_keeps_recently_seen_sensors);
   RUN_TEST(test_table_marks_stale_entries);
   RUN_TEST(test_format_line_with_humidity_and_low_battery);
   RUN_TEST(test_format_line_negative_without_humidity_and_stale);

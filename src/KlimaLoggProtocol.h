@@ -6,6 +6,7 @@
 //   2D D4 | II II | sT TT | HH | BB | SS | 56 | CC
 //
 //   II  15-bit sensor ID (top bit ignored)
+//   s   learning sequence 0..F while pairing, fixed 8 afterwards
 //   TTT BCD temperature, 0.1 degC steps, offset +40 degC
 //   HH  humidity % (bits 6:0, binary), 0x6A = not available
 //   BB  bit 7 = low battery
@@ -32,6 +33,7 @@ constexpr uint8_t kCrcPoly = 0x31;
 constexpr uint8_t kHumidityNotAvailable = 0x6A;
 constexpr uint8_t kHumidityMax = 100;
 constexpr int kTemperatureOffsetTenths = 400;
+constexpr uint8_t kLearningDone = 8;
 
 enum class Status : uint8_t { Ok, ShortBuffer, BadType, BadCrc, BadTemperature };
 
@@ -42,6 +44,7 @@ struct Reading {
   uint8_t humidity;
   bool batteryLow;
   uint8_t sequence;
+  uint8_t learning;  // 0..F while the sensor is pairing, 8 once learned
 };
 
 struct DecodeResult {

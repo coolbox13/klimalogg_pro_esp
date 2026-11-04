@@ -14,7 +14,10 @@ constexpr int kLineHeight = 10;
 constexpr int kWidth = 128;
 constexpr size_t kMaxSensorLines = 5;  // 64 px - header
 
-// T3 V1.6.1: OLED on SDA 21 / SCL 22, reset not wired.
+// T3 V1.6.1: OLED on SDA 21 / SCL 22.
+// Do NOT drive OLED_RST (GPIO16) even though the board variant defines it:
+// this board is an ESP32-PICO-D4, where GPIO16 belongs to the internal
+// flash. Touching it hangs the chip (TG1WDT_SYS_RESET boot loop).
 SSD1306Wire oled(kI2cAddress, OLED_SDA, OLED_SCL);
 
 void drawHeader(const Status& s) {

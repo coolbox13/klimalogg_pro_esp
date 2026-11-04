@@ -54,6 +54,7 @@ DecodeResult parsePayload(const uint8_t* p, size_t len) {
   result.reading.humidity = result.reading.hasHumidity ? humidity : 0;
   result.reading.batteryLow = (p[5] & 0x80) != 0;
   result.reading.sequence = p[6] >> 4;
+  result.reading.learning = p[2] >> 4;
   return result;
 }
 

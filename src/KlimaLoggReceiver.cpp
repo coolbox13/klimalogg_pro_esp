@@ -11,6 +11,8 @@
 #include <soc/gpio_reg.h>
 #include <xtensa/core-macros.h>
 
+#include <atomic>
+
 #include "PulseDecoder.h"
 
 namespace klimalogg {
@@ -22,43 +24,49 @@ constexpr float kOokBitrateKbps = 32.768f;
 constexpr float kFreqDevKHz = 5.0f;  // unused for OOK, must be legal
 constexpr int8_t kTxPowerDbm = 10;   // unused, receive only
 constexpr uint16_t kPreambleBits = 16;
-constexpr uint32_t kEndOfTransmissionUs = 200;  // low this long = done
+// Output low and no new edges for this long = transmission over.
+constexpr uint32_t kEndOfTransmissionUs = 200;
 
 constexpr uint32_t kRingSize = 4096;  // power of two: indices wrap with %
 
-// ---- written by the ISR, read by poll() ----
+// ---- shared between the ISR (producer) and poll() (consumer) ----
+// Single-producer/single-consumer ring. The ISR fills a slot, then publishes
+// it with a release store of `head`; poll() reads `head` with acquire before
+// touching the slot. That stays correct when poll() runs on the other core.
 // Edge timestamps use the cycle counter of the ISR's core, so only
 // differences between ring entries are meaningful. Counters only grow;
-// readers work with differences, so no cross-core reset races.
-volatile uint32_t ringCycles[kRingSize];
-volatile uint8_t ringLevel[kRingSize];
-volatile uint32_t head = 0;
-volatile uint32_t tail = 0;  // written by poll() only
-volatile uint32_t edgeTotal = 0;
-volatile uint32_t droppedTotal = 0;
-volatile uint32_t lastEdgeUs = 0;  // esp_timer, same clock on both cores
+// readers work with differences, so there are no reset races.
+uint32_t ringCycles[kRingSize];
+uint8_t ringLevel[kRingSize];
+std::atomic<uint32_t> head{0};
+std::atomic<uint32_t> tail{0};
+std::atomic<uint32_t> edgeTotal{0};
+std::atomic<uint32_t> droppedTotal{0};
 // GPIO input register for DIO2 (GPIO_IN1_REG for pins >= 32). Read
 // through a pointer: REG_READ() on a variable address trips an IDF
 // compile-time DPORT check.
 volatile uint32_t* dataInReg = (volatile uint32_t*)GPIO_IN_REG;
 uint32_t dataShift = 0;
 
+// Kept minimal: it can run ~100k times per second on noise.
 void IRAM_ATTR onEdge() {
   const uint32_t cycles = XTHAL_GET_CCOUNT();
   const uint8_t level = (*dataInReg >> dataShift) & 1;
-  lastEdgeUs = (uint32_t)esp_timer_get_time();
-  edgeTotal = edgeTotal + 1;
-  const uint32_t h = head;
-  if (h - tail >= kRingSize) {
-    droppedTotal = droppedTotal + 1;
+  edgeTotal.store(edgeTotal.load(std::memory_order_relaxed) + 1,
+                  std::memory_order_relaxed);
+  const uint32_t h = head.load(std::memory_order_relaxed);
+  if (h - tail.load(std::memory_order_acquire) >= kRingSize) {
+    droppedTotal.store(droppedTotal.load(std::memory_order_relaxed) + 1,
+                       std::memory_order_relaxed);
     return;
   }
   ringCycles[h % kRingSize] = cycles;
   ringLevel[h % kRingSize] = level;
-  head = h + 1;
+  head.store(h + 1, std::memory_order_release);
 }
 
 // ---- owned by the polling task ----
+const Receiver* owner = nullptr;  // the Receiver that called begin()
 SPIClass* spi = nullptr;
 Module* module = nullptr;
 SX1276* radio = nullptr;
@@ -73,6 +81,8 @@ uint32_t cyclesPerUs = 240;
 uint32_t droppedSeen = 0;
 uint32_t statsEdgesSeen = 0;
 uint32_t statsDroppedSeen = 0;
+uint32_t activityEdgeTotal = 0;  // edgeTotal when poll() last saw activity
+uint32_t activityUs = 0;         // poll()'s esp_timer at that moment
 
 void resetDecoding() {
   decoder.reset();
@@ -92,12 +102,33 @@ void releaseRadio() {
 }
 
 bool popEdge(uint32_t* cycles, uint8_t* level) {
-  const uint32_t t = tail;
-  if (t == head) return false;
+  const uint32_t t = tail.load(std::memory_order_relaxed);
+  if (t == head.load(std::memory_order_acquire)) return false;
   *cycles = ringCycles[t % kRingSize];
   *level = ringLevel[t % kRingSize];
-  tail = t + 1;
+  tail.store(t + 1, std::memory_order_release);
   return true;
+}
+
+// The ISR keeps no wall-clock time; poll() notes when it last saw the edge
+// counter move and measures quiet time from there with its own clock.
+uint32_t microsSinceActivity() {
+  const uint32_t nowUs = (uint32_t)esp_timer_get_time();
+  const uint32_t total = edgeTotal.load(std::memory_order_relaxed);
+  if (total != activityEdgeTotal) {
+    activityEdgeTotal = total;
+    activityUs = nowUs;
+  }
+  return nowUs - activityUs;
+}
+
+bool validPins(const ReceiverPins& p) {
+  auto isGpio = [](int8_t pin) { return pin >= 0 && pin <= 39; };
+  // GPIO 34..39 are input-only: fine for DIO lines, not for SPI out/CS/RST.
+  auto isOutput = [](int8_t pin) { return pin >= 0 && pin <= 33; };
+  return isOutput(p.sck) && isGpio(p.miso) && isOutput(p.mosi) &&
+         isOutput(p.cs) && (p.reset < 0 || isOutput(p.reset)) &&
+         isGpio(p.dio0) && isGpio(p.dio2);
 }
 
 void sampleRssi() {
@@ -136,8 +167,11 @@ int16_t configureRadio(SX1276& r, const ReceiverConfig& cfg) {
 
 }  // namespace
 
+Receiver::~Receiver() { end(); }
+
 int16_t Receiver::begin(const ReceiverPins& pins, const ReceiverConfig& cfg) {
-  if (radio != nullptr) return RADIOLIB_ERR_UNKNOWN;  // one receiver only
+  if (owner != nullptr) return kErrAlreadyRunning;  // one receiver only
+  if (!validPins(pins)) return kErrInvalidPins;
 
   spi = new SPIClass(VSPI);
   spi->begin(pins.sck, pins.miso, pins.mosi, pins.cs);
@@ -154,19 +188,23 @@ int16_t Receiver::begin(const ReceiverPins& pins, const ReceiverConfig& cfg) {
   dataPin = pins.dio2;
   dataInReg = (volatile uint32_t*)(pins.dio2 >= 32 ? GPIO_IN1_REG : GPIO_IN_REG);
   dataShift = pins.dio2 >= 32 ? pins.dio2 - 32 : pins.dio2;
-  tail = head;
-  droppedSeen = droppedTotal;
-  statsEdgesSeen = edgeTotal;
-  statsDroppedSeen = droppedTotal;
+  tail.store(head.load(std::memory_order_acquire), std::memory_order_release);
+  droppedSeen = droppedTotal.load();
+  statsEdgesSeen = edgeTotal.load();
+  statsDroppedSeen = droppedTotal.load();
+  activityEdgeTotal = edgeTotal.load();
+  activityUs = (uint32_t)esp_timer_get_time();
   resetDecoding();
 
   pinMode(dataPin, INPUT);
   attachInterrupt(digitalPinToInterrupt(dataPin), onEdge, CHANGE);
+  owner = this;
   return RADIOLIB_ERR_NONE;
 }
 
 void Receiver::end() {
-  if (radio == nullptr) return;
+  if (owner != this) return;  // never started, or another object owns it
+  owner = nullptr;
   detachInterrupt(digitalPinToInterrupt(dataPin));
   radio->standby();
   releaseRadio();
@@ -174,10 +212,10 @@ void Receiver::end() {
 }
 
 bool Receiver::poll(Telegram* out) {
-  if (radio == nullptr) return false;
+  if (owner != this || out == nullptr) return false;
 
   // Lost edges leave the level sequence inconsistent: start over.
-  const uint32_t dropped = droppedTotal;
+  const uint32_t dropped = droppedTotal.load(std::memory_order_relaxed);
   if (dropped != droppedSeen) {
     droppedSeen = dropped;
     resetDecoding();
@@ -206,10 +244,10 @@ bool Receiver::poll(Telegram* out) {
     }
   }
 
-  // Output low for a while: the transmission is over.
+  // Output low and no new edges for a while: the transmission is over.
+  const uint32_t quietUs = microsSinceActivity();
   if (!haveLastEdge || flushed || lastLevel) return false;
-  const uint32_t idleUs = (uint32_t)esp_timer_get_time() - lastEdgeUs;
-  if (idleUs < kEndOfTransmissionUs) return false;
+  if (quietUs < kEndOfTransmissionUs) return false;
   flushed = true;
   if (decoder.endOfTransmission()) {
     *out = finish();
@@ -219,9 +257,15 @@ bool Receiver::poll(Telegram* out) {
   return false;
 }
 
+int16_t Receiver::setOokFloor(uint8_t floor) {
+  if (owner != this) return kErrNotRunning;
+  return radio->setOokFixedOrFloorThreshold(floor);
+}
+
 ReceiverStats Receiver::takeStats() {
-  const uint32_t edges = edgeTotal;
-  const uint32_t dropped = droppedTotal;
+  if (owner != this) return ReceiverStats{0, 0};
+  const uint32_t edges = edgeTotal.load();
+  const uint32_t dropped = droppedTotal.load();
   const ReceiverStats s{edges - statsEdgesSeen, dropped - statsDroppedSeen};
   statsEdgesSeen = edges;
   statsDroppedSeen = dropped;
@@ -229,7 +273,7 @@ ReceiverStats Receiver::takeStats() {
 }
 
 float Receiver::instantRssi() {
-  return radio ? radio->getRSSI(false, true) : kRssiUnknown;
+  return owner == this ? radio->getRSSI(false, true) : kRssiUnknown;
 }
 
 }  // namespace klimalogg

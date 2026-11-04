@@ -9,8 +9,12 @@ bool SensorTable::update(const Reading& reading, int16_t rssi, uint32_t nowMs) {
   while (index < count_ && entries_[index].reading.id != reading.id) index++;
 
   if (index == count_) {
-    if (count_ == kCapacity) return false;
-    count_++;
+    if (count_ < kCapacity) {
+      count_++;
+    } else {
+      index = longestSilent(nowMs);
+      if (nowMs - entries_[index].lastSeenMs < kEvictAfterMs) return false;
+    }
     entries_[index] = SensorEntry{};
   }
 
@@ -20,6 +24,16 @@ bool SensorTable::update(const Reading& reading, int16_t rssi, uint32_t nowMs) {
   e.lastSeenMs = nowMs;
   e.packets++;
   return true;
+}
+
+size_t SensorTable::longestSilent(uint32_t nowMs) const {
+  size_t oldest = 0;
+  for (size_t i = 1; i < count_; i++) {
+    if (nowMs - entries_[i].lastSeenMs > nowMs - entries_[oldest].lastSeenMs) {
+      oldest = i;
+    }
+  }
+  return oldest;
 }
 
 bool SensorTable::isStale(size_t index, uint32_t nowMs) const {

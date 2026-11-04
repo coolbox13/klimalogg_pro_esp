@@ -20,7 +20,7 @@ with three 30.3180.IT sensors. Classic ESP32 only (not the RISC-V C3/C6/H2).
 platform = espressif32 @ 6.13.0
 board = ttgo-lora32-v21
 framework = arduino
-lib_deps = https://github.com/coolbox13/klimalogg_pro_esp.git#v1.0.1
+lib_deps = https://github.com/coolbox13/klimalogg_pro_esp.git#v1.1.0
 ```
 
 ```cpp
@@ -39,13 +39,18 @@ void loop() {
   while (receiver.poll(&t)) {
     if (t.result.status != klimalogg::Status::Ok) continue;
     const klimalogg::Reading& r = t.result.reading;
-    Serial.printf("%04X %.1f C %u %%\n", r.id, r.temperatureC, r.humidity);
+    Serial.printf("%04X %.1f C", r.id, r.temperatureC);
+    if (r.hasHumidity) Serial.printf(" %u %%", r.humidity);  // not on 30.3181
+    Serial.println();
   }
 }
 ```
 
-A full example with OLED display and JSON output is in
-[`examples/serial_oled`](examples/serial_oled).
+Examples:
+- [`examples/serial_oled`](examples/serial_oled): OLED display + one JSON
+  line per reading.
+- [`examples/tune_floor`](examples/tune_floor): measures the best
+  `ookFloor` for your location (see *Tuning* below).
 
 ### Other boards
 
@@ -64,26 +69,30 @@ Use an 868 MHz radio module and antenna. A 433 MHz SX1278 board will not work.
 
 | Call | What it does |
 |------|--------------|
-| `begin(pins, config)` | Set up the radio. Returns a RadioLib status code, 0 = ok. Safe to retry |
+| `begin(pins, config)` | Set up the radio. 0 = ok, `kErrAlreadyRunning`, `kErrInvalidPins` or a RadioLib code. Safe to retry |
 | `poll(&telegram)` | Process received signal; true when a telegram completed. Never waits |
 | `end()` | Stop and release the radio |
+| `setOokFloor(floor)` | Change the noise threshold at runtime |
 | `takeStats()` | Edges seen / dropped since the last call |
 | `instantRssi()` | Current signal level in dBm |
 
 `Telegram::rssi` is an approximate peak in dBm (`kRssiUnknown` = -200 if not
 sampled). `Telegram::result.status` is `Ok`, `BadCrc`, `BadType`, `BadTemperature` or
 `ShortBuffer`. `Reading` holds `id`, `temperatureC`, `hasHumidity`,
-`humidity`, `batteryLow` and `sequence`. `SensorTable` keeps the latest
-reading per sensor if you want it.
+`humidity`, `batteryLow`, `sequence` and `learning` (0–F while a sensor is
+pairing, 8 once learned). `SensorTable` keeps the latest reading per sensor
+(up to 8; when full, a sensor silent for 30 minutes makes room for a new one).
 
-One `Receiver` per board. Call `begin()` and `poll()` from the same task and
-keep the CPU frequency fixed.
+One running `Receiver` per board. Call `begin()` and `poll()` from the same
+task and keep the CPU frequency fixed.
 
-**Call `poll()` often.** The radio produces up to ~100,000 edges per second
-(noise included) into a 4096-entry buffer. Blocking the loop for more than a
-few tens of milliseconds drops edges and loses telegrams; check
-`takeStats().droppedEdges`. When adding WiFi/MQTT, run the network code in a
-separate FreeRTOS task.
+**Call `poll()` often.** Each telegram is ~470 edges in ~6 ms into a
+4096-entry buffer. Blocking the polling task for long, or setting `ookFloor`
+so low that noise gets through (~100,000 edges/s), drops edges and loses
+telegrams; check `takeStats().droppedEdges`. When adding WiFi/MQTT, run the
+network code in a separate FreeRTOS task. The examples print every rejected
+telegram to serial (`KL_DEBUG_FRAMES`); one line takes ~4 ms, well within the
+buffer.
 
 `ReceiverConfig` options:
 
@@ -91,7 +100,23 @@ separate FreeRTOS task.
 |-------|---------|-------|
 | `frequencyMHz` | 868.30 | Sensors measured at 868.31 MHz |
 | `bandwidthKHz` | 125 | Single-sided SX1276 filter; keep ≥ 62.5 |
-| `ookFloor` | 15 | Raise to cut idle noise edges, lower for weak sensors |
+| `ookFloor` | 90 | Noise threshold. Too low: noise causes ~100k interrupts/s. Too high: weak sensors drop out |
+
+### Tuning
+
+Flash [`examples/tune_floor`](examples/tune_floor) and open the serial
+monitor. It scans idle noise per floor value, then counts valid telegrams per
+sensor around the first quiet value. Measured on a T3 V1.6.1 indoors:
+
+| `ookFloor` | Idle edges/s | 3 sensors (−30…−75 dBm) |
+|-----------|--------------|------------------------|
+| 15–60 | ~106,000 | received |
+| 80 | ~90 | received |
+| **90** | **0** | **received** |
+| 110 | 0 | weakest sensor mostly lost |
+
+Pick the highest value that still receives all your sensors, then go one
+step (10) lower for margin.
 
 ## Protocol
 
@@ -129,13 +154,15 @@ To see what's on air with an RTL-SDR dongle:
 ## Development
 
 ```
-pio test -e native            # host unit tests, incl. a real rtl_433 capture
-pio run -e t3_v161 -t upload  # build + flash examples/serial_oled
+pio test -e native               # host unit tests, incl. a real rtl_433 capture
+pio run -e t3_v161 -t upload     # build + flash examples/serial_oled
+pio run -e tune_floor -t upload  # build + flash examples/tune_floor
 pio device monitor
 ```
 
-If uploads fail with `Bad data checksum`, use another USB port; monitor
-built-in hubs are a known cause.
+If uploads fail with `Bad data checksum` or `Not enough data`, use another
+USB port; monitor hubs and busy USB hubs (e.g. with an SDR dongle on them)
+are known causes.
 
 ## License
 

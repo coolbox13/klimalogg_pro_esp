@@ -54,9 +54,15 @@ bool PulseDecoder::emitPulse(uint32_t pulseUs, uint32_t gapUs) {
   const uint32_t ones = chips / 2;
   const bool lastPulse = gapUs > kMaxGapUs;
 
+  // Shorter than half a chip: a noise spike, not data. Ignore it rather
+  // than dropping the telegram in progress.
+  if (chips == 0) {
+    if (lastPulse) resetFrame();  // still end the transmission
+    return false;
+  }
   // BCD digits and the sync word never produce long runs of ones, so a very
   // long pulse is interference, not a telegram.
-  if (chips == 0 || ones > kMaxOnesPerPulse) {
+  if (ones > kMaxOnesPerPulse) {
     resetFrame();
     return false;
   }

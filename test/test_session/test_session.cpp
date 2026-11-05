@@ -117,6 +117,26 @@ void test_full_download_survives_new_record_after_probe() {
   TEST_ASSERT_EQUAL(38298, ackIndex(r));
 }
 
+void test_unwrapped_ring_downloads_from_slot_one() {
+  // Ring never wrapped: the console answers a request beyond its newest
+  // record with the newest frame. Slot 0 holds no record.
+  ConsoleSession s(SessionOptions{0x01B2});
+  feed(s, bytes(kConfigHex));
+  feed(s, history(39348, 39430));            // probe: asks after 39364
+  Reply r = feed(s, history(39348, 39348));  // console: only up to 39348
+  TEST_ASSERT_EQUAL(SessionState::Download, s.state());
+  TEST_ASSERT_EQUAL(0, ackIndex(r));         // records after slot 0
+  TEST_ASSERT_EQUAL(39348, s.recordsTotal());
+  TEST_ASSERT_EQUAL(0, s.takeRecords(nullptr, nullptr, 0));
+  r = feed(s, history(39348, 6));            // records 1..6
+  HistoryRecord recs[kRecordsPerFrame];
+  uint32_t idx[kRecordsPerFrame];
+  TEST_ASSERT_EQUAL(6, s.takeRecords(recs, idx, kRecordsPerFrame));
+  TEST_ASSERT_EQUAL(1, idx[0]);
+  TEST_ASSERT_EQUAL(6, s.recordsDone());
+  TEST_ASSERT_EQUAL(6, ackIndex(r));
+}
+
 void test_limited_download_and_progress() {
   ConsoleSession s(SessionOptions{0x01B2, 12});
   feed(s, bytes(kConfigHex));
@@ -282,6 +302,7 @@ int main() {
   RUN_TEST(test_config_then_history_probe);
   RUN_TEST(test_full_download_starts_at_oldest_record);
   RUN_TEST(test_full_download_survives_new_record_after_probe);
+  RUN_TEST(test_unwrapped_ring_downloads_from_slot_one);
   RUN_TEST(test_limited_download_and_progress);
   RUN_TEST(test_partial_frame_only_new_records);
   RUN_TEST(test_repeated_frame_after_skipped_reply);

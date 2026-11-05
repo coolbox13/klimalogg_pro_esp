@@ -129,6 +129,16 @@ size_t ConsoleSession::onHistory(const uint8_t* f, size_t len, const Header& h,
     return afterDownload(h, now, out);
   }
 
+  // Ring never wrapped (e.g. after new batteries): the console answers a
+  // request beyond its newest record with the newest frame. Its records
+  // then run from slot 1 (slot 0 holds none).
+  if (done_ == 0 && hf.thisIndex == hf.latestIndex &&
+      distance(requested_, hf.latestIndex) > (uint32_t)kRecordsPerFrame &&
+      start_ > hf.latestIndex) {
+    start_ = 1;
+    requested_ = 0;
+  }
+
   // The console logs on during the download.
   total_ = distance(ringAdd(start_, -1), hf.latestIndex);
   const uint32_t step = distance(requested_, hf.thisIndex);

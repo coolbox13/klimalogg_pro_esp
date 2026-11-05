@@ -94,10 +94,27 @@ void test_full_download_starts_at_oldest_record() {
   Reply r = feed(s, history(38275, 38406));  // probe answer
   TEST_ASSERT_EQUAL(0, s.takeRecords(nullptr, nullptr, 0));  // not requested
   TEST_ASSERT_EQUAL(SessionState::Download, s.state());
-  // All but the oldest slot (38276, overwritten next): records after 38276.
-  TEST_ASSERT_EQUAL(38276, ackIndex(r));
-  TEST_ASSERT_EQUAL(kHistorySlots - 1, s.recordsTotal());
+  // The console overwrites the oldest slots while it logs on, so the
+  // oldest kOverwriteMargin + 1 slots are left out: records after 38292.
+  TEST_ASSERT_EQUAL(38292, ackIndex(r));
+  TEST_ASSERT_EQUAL(kHistorySlots - 1 - kOverwriteMargin, s.recordsTotal());
   TEST_ASSERT_EQUAL(0, s.recordsDone());
+}
+
+void test_full_download_survives_new_record_after_probe() {
+  ConsoleSession s(SessionOptions{0x01B2});
+  feed(s, bytes(kConfigHex));
+  feed(s, history(38275, 38406));            // probe: asks after 38292
+  Reply r = feed(s, history(38276, 38406));  // console logged one more
+  TEST_ASSERT_EQUAL(SessionState::Download, s.state());
+  TEST_ASSERT_EQUAL(38292, ackIndex(r));
+  r = feed(s, history(38277, 38298));        // records 38293..38298
+  HistoryRecord recs[kRecordsPerFrame];
+  uint32_t idx[kRecordsPerFrame];
+  TEST_ASSERT_EQUAL(6, s.takeRecords(recs, idx, kRecordsPerFrame));
+  TEST_ASSERT_EQUAL(38293, idx[0]);
+  TEST_ASSERT_EQUAL(SessionState::Download, s.state());
+  TEST_ASSERT_EQUAL(38298, ackIndex(r));
 }
 
 void test_limited_download_and_progress() {
@@ -264,6 +281,7 @@ int main() {
   RUN_TEST(test_asks_config_first);
   RUN_TEST(test_config_then_history_probe);
   RUN_TEST(test_full_download_starts_at_oldest_record);
+  RUN_TEST(test_full_download_survives_new_record_after_probe);
   RUN_TEST(test_limited_download_and_progress);
   RUN_TEST(test_partial_frame_only_new_records);
   RUN_TEST(test_repeated_frame_after_skipped_reply);

@@ -38,6 +38,9 @@ constexpr size_t kAckBytes = 11;
 constexpr int kChannels = 9;  // 0 = the console's own sensor, 1..8 radio
 constexpr int kRecordsPerFrame = 6;
 constexpr uint32_t kHistorySlots = 51200;  // ring of history records
+// Oldest slots a full download leaves out: the console keeps logging and
+// overwrites them first. 16 slots = 16 minutes at the 1-minute interval.
+constexpr uint32_t kOverwriteMargin = 16;
 constexpr uint32_t kNoIndex = 0xFFFFFFFF;
 constexpr uint16_t kNoSensor = 0xFFFF;
 

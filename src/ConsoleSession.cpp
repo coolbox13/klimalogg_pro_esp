@@ -114,8 +114,8 @@ size_t ConsoleSession::onHistory(const uint8_t* f, size_t len, const Header& h,
   }
 
   if (state_ == SessionState::Probe) {
-    // The oldest slot is overwritten next; leave it out.
-    const uint32_t most = kHistorySlots - 1;
+    // The oldest slots are overwritten next; leave them out.
+    const uint32_t most = kHistorySlots - 1 - kOverwriteMargin;
     const uint32_t count =
         (opt_.maxRecords == 0 || opt_.maxRecords > most) ? most : opt_.maxRecords;
     start_ = ringAdd(hf.latestIndex, 1 - (int32_t)count);

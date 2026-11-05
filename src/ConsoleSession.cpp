@@ -157,9 +157,27 @@ size_t ConsoleSession::onHistory(const uint8_t* f, size_t len, const Header& h,
     }
     requested_ = ringAdd(requested_, (int32_t)take);
     done_ += take;
+    refusals_ = 0;
+    skip_ = 1;
+  } else if (hf.thisIndex == hf.latestIndex &&
+             ++refusals_ >= kRefusalsBeforeSkip) {
+    skipAhead(hf.latestIndex);
   }
   if (requested_ == hf.latestIndex) return afterDownload(h, now, out);
   return ack(h, Action::GetHistory, requested_, out);
+}
+
+// The console keeps answering with its newest frame: it will not send the
+// records after `requested_` (seen on records written while its battery
+// ran out). Leave some out, more each time it refuses again.
+void ConsoleSession::skipAhead(uint32_t latest) {
+  const uint32_t remaining = distance(requested_, latest);
+  const uint32_t jump = skip_ < remaining ? skip_ : remaining;
+  requested_ = ringAdd(requested_, (int32_t)jump);
+  done_ += jump;
+  skipped_ += jump;
+  skip_ = skip_ * 2 < kMaxSkip ? skip_ * 2 : kMaxSkip;
+  refusals_ = 0;
 }
 
 size_t ConsoleSession::takeRecords(HistoryRecord* records, uint32_t* indexes,

@@ -198,6 +198,35 @@ void test_unexpected_index_asks_again() {
   TEST_ASSERT_EQUAL(988, ackIndex(r));
 }
 
+void test_skips_records_the_console_refuses() {
+  // The console answers some requests with its newest frame for good
+  // (records written while its battery ran out). Skip 1, 2, 4, ... records.
+  ConsoleSession s(SessionOptions{0x01B2, 12});
+  feed(s, bytes(kConfigHex));
+  Reply r = feed(s, history(1000, 5));  // asks after 988
+  for (int i = 1; i < kRefusalsBeforeSkip; i++) {
+    r = feed(s, history(1000, 1000));
+    TEST_ASSERT_EQUAL(988, ackIndex(r));
+  }
+  r = feed(s, history(1000, 1000));
+  TEST_ASSERT_EQUAL(989, ackIndex(r));  // skipped 989
+  TEST_ASSERT_EQUAL(1, s.recordsSkipped());
+  for (int i = 0; i < kRefusalsBeforeSkip; i++) r = feed(s, history(1000, 1000));
+  TEST_ASSERT_EQUAL(991, ackIndex(r));  // skipped 990, 991
+  TEST_ASSERT_EQUAL(3, s.recordsSkipped());
+
+  r = feed(s, history(1000, 997));      // 992..997 arrive again
+  HistoryRecord recs[kRecordsPerFrame];
+  uint32_t idx[kRecordsPerFrame];
+  TEST_ASSERT_EQUAL(6, s.takeRecords(recs, idx, kRecordsPerFrame));
+  TEST_ASSERT_EQUAL(992, idx[0]);
+  TEST_ASSERT_EQUAL(9, s.recordsDone());
+  TEST_ASSERT_EQUAL(997, ackIndex(r));
+  // After progress a refusal starts again at one record.
+  for (int i = 0; i < kRefusalsBeforeSkip; i++) r = feed(s, history(1010, 1010));
+  TEST_ASSERT_EQUAL(998, ackIndex(r));
+}
+
 void test_wraps_around_the_ring() {
   ConsoleSession s(SessionOptions{0x01B2, 10});
   feed(s, bytes(kConfigHex));
@@ -307,6 +336,7 @@ int main() {
   RUN_TEST(test_partial_frame_only_new_records);
   RUN_TEST(test_repeated_frame_after_skipped_reply);
   RUN_TEST(test_unexpected_index_asks_again);
+  RUN_TEST(test_skips_records_the_console_refuses);
   RUN_TEST(test_wraps_around_the_ring);
   RUN_TEST(test_latest_moves_during_download);
   RUN_TEST(test_never_reads_past_latest);

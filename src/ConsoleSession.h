@@ -37,6 +37,13 @@ struct LocalTime {
 size_t buildTimeFrame(const Header& received, const LocalTime& now,
                       uint8_t out[kTimeFrameBytes]);
 
+// Frames in a row the console may answer with its newest frame instead of
+// the requested records before the session skips ahead (it repeats each
+// frame ~4 times per reply we may send, so this is ~3 requests).
+constexpr int kRefusalsBeforeSkip = 12;
+// Largest skip; skips double from 1 while the console keeps refusing.
+constexpr uint32_t kMaxSkip = 256;
+
 struct SessionOptions {
   uint16_t deviceId;           // ID the console is paired with
   uint32_t maxRecords = 0;     // 0 = everything the console holds
@@ -66,6 +73,8 @@ class ConsoleSession {
   const CurrentWeather& current() const { return current_; }
   uint32_t recordsDone() const { return done_; }
   uint32_t recordsTotal() const { return total_; }
+  // Records left out because the console refused to send them.
+  uint32_t recordsSkipped() const { return skipped_; }
   bool timeWasSet() const { return timeSet_; }
 
  private:
@@ -73,6 +82,7 @@ class ConsoleSession {
   size_t onHistory(const uint8_t* f, size_t len, const Header& h,
                    const LocalTime& now, uint8_t* out);
   size_t afterDownload(const Header& h, const LocalTime& now, uint8_t* out);
+  void skipAhead(uint32_t latest);
 
   SessionOptions opt_;
   SessionState state_ = SessionState::WaitConfig;
@@ -84,6 +94,9 @@ class ConsoleSession {
   uint32_t requested_ = 0;   // last index stored; console sends after it
   uint32_t done_ = 0;
   uint32_t total_ = 0;
+  uint32_t skipped_ = 0;
+  int refusals_ = 0;     // newest-frame answers since the last progress
+  uint32_t skip_ = 1;    // next skip size
   bool timeSet_ = false;
   HistoryRecord pending_[kRecordsPerFrame];
   uint32_t pendingIndex_[kRecordsPerFrame];
